@@ -10,7 +10,7 @@ from transaction import Transaction
 class Wallet:
     def __init__(self, bootstrap_nodes: Optional[Iterable[str]] = None):
         self._private_key = RSA.generate(2048)
-        self._public_key = self._private_key.publickey().export_key()
+        self._public_key = self._private_key.publickey().export_key().decode('utf-8')
         self._bootstrap_nodes = bootstrap_nodes
 
     def get_public_key(self) -> RSA.RsaKey:
@@ -25,23 +25,24 @@ class Wallet:
 
     def request_transaction(self, recipient_address: str, amount: int) -> bool:
         new_transaction = Transaction(
-            str(self._public_key),
-            str(recipient_address),
+            self._public_key,
+            recipient_address,
             amount
         )
 
         signed_transaction = self.get_signed_transaction(new_transaction)
         signed_transaction_data = signed_transaction.to_json()
 
-        # Try to send transaction to a listening node
         for bootstrap_node in self._bootstrap_nodes:
+            print('Sending transaction to bootstrap node: ', bootstrap_node, '...', sep='', end=' ')
             response = requests.post(
-                bootstrap_node,
-                data={'transaction': signed_transaction_data}
+                bootstrap_node + "/transactions",
+                data={'data': signed_transaction_data}
             )
-
             if response.status_code == 200:
+                print('Done.')
                 break
+            print('Failed.')
         else:
             print("Unable to send transaction request to any of the bootstrap nodes.")
             return False

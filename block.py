@@ -20,7 +20,7 @@ class Block:
         }
 
         return json.dumps(block_data)
-    
+
     def to_bytes(self) -> bytes:
         return self.to_json().encode("utf-8")
 
