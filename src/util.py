@@ -25,7 +25,7 @@ parent_message_types = {
 consensus_epoch_duration = 12
 
 # don't add events from last ingore_time_delta seconds to blockchain to make sure all nodes received the information
-ignore_time_delta = 5
+ignore_time_delta = 0.1
 
 generator_wallet_amount = 1_000_000_000
 minimum_validator_balance = 32

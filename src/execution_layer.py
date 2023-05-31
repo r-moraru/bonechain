@@ -93,15 +93,12 @@ class ExecutionLayer:
                 penalty_time = block._penalties[k].get_timestamp()
 
             if transaction_time <= join_time and transaction_time <= penalty_time:
-                print("processing transaction.")
                 self.update_state_from_transaction(block._transactions[i], is_from_genesis=is_from_genesis)
                 i += 1
             if join_time <= transaction_time and join_time <= penalty_time:
-                print("processing join request/")
                 self.update_state_from_join_request(block._join_requests[j])
                 j += 1
             if penalty_time <= transaction_time and penalty_time <= join_time:
-                print("processing penalty.")
                 self.update_state_from_penalty(block._penalties[k])
                 k += 1
 
@@ -128,6 +125,8 @@ class ExecutionLayer:
         join_request = self.create_join_request(wallet)
 
         if is_blockchain_creator:
+            # OPT: save all wallets somewhere
+            wallet1 = Wallet()
             self._blockchain = Blockchain()
             # for simplicity, add a transaction and a join request to be
             # processed but not checked by the rest of the nodes
@@ -141,10 +140,15 @@ class ExecutionLayer:
                             sender_address='',
                             recipient_address=wallet.get_public_key(),
                             amount=generator_wallet_amount
+                        ),
+                        Transaction(
+                            sender_address=wallet.get_public_key(),
+                            recipient_address=wallet1.get_public_key(),
+                            amount=2 * minimum_validator_balance
                         )
                     ],
                     join_requests=[
-                        self.create_join_request(wallet)
+                        self.create_join_request(wallet1)
                     ],
                     penalties=[]
                 )
@@ -197,8 +201,7 @@ class ExecutionLayer:
         if transaction.get_sender_address() in self._validator_wallets.values():
             return False
         
-        if (check_transaction_signature(transaction) and
-            self.check_transaction_funds(transaction)):
+        if (check_transaction_signature(transaction)):
             self._pending_transactions.append(transaction)
             return True
         return False
@@ -265,9 +268,7 @@ class ExecutionLayer:
         self._proposed_forger = forger_id
         
         self._consensus_loop_out.put(
-            {
-                'forger-id': forger_id
-            },
+            forger_id,
             block=False,
             msg_type=consensus_message_types['forger-id']
         )
@@ -280,9 +281,9 @@ class ExecutionLayer:
         accepted_transactions = []
         accepted_join_requests = []
         while True:
-            sentinel = datetime.now().timestamp()
+            sentinel = datetime.now().timestamp()+3
             if i == len(transactions) and j == len(join_requests):
-                return
+                break
             if i == len(transactions):
                 transaction_time = sentinel
             else:
@@ -305,13 +306,13 @@ class ExecutionLayer:
                 accepted_join_requests.append(join_requests[j])
                 j += 1
 
-            for transaction in accepted_transactions:
-                self.reverse_transaction(transaction)
-            
-            for join_request in accepted_join_requests:
-                self.reverse_join_request(join_request)
+        for transaction in accepted_transactions:
+            self.reverse_transaction(transaction)
+        
+        for join_request in accepted_join_requests:
+            self.reverse_join_request(join_request)
 
-            return accepted_transactions, accepted_join_requests
+        return accepted_transactions, accepted_join_requests
 
     def get_valid_data(self, creation_time: float):
         block_transactions = [
@@ -329,7 +330,7 @@ class ExecutionLayer:
         block_penalties.sort(key=lambda x: x.get_timestamp())
 
         filtered_transactions, filtered_join_requests = (
-            self.filter_out_invalid_data(block_transactions))
+            self.filter_out_invalid_data(block_transactions, block_join_requests))
 
         return filtered_transactions, filtered_join_requests, block_penalties
 
@@ -357,6 +358,28 @@ class ExecutionLayer:
             new_block.to_dict(),
             block=False,
             msg_type=network_message_types['create-block']
+        )
+
+        attestation = Attestation(
+            verdict=True,
+            block_hash=new_block.calculate_hash(),
+            validator_id=self._validator.get_public_key()
+        )
+
+        self._attestation_pool[self._validator.get_public_key()] = attestation
+        self._proposed_block = new_block
+
+        attestation_signature = self._validator.sign_message(attestation.to_dict())
+
+        answer = {
+            'attestation': attestation.to_dict(),
+            'signature': attestation_signature
+        }
+
+        self._network_out.put(
+            answer,
+            block=False,
+            msg_type=network_message_types['attestation']
         )
 
     def check_block(self, block: Block) -> bool:
@@ -433,9 +456,10 @@ class ExecutionLayer:
 
     def process_inactive_validators(self):
         # Currently inactive validators simply get removed from the pool
-        for validator in self._validator_wallets.keys():
-            if not validator in self._attestation_pool.keys():
-                self._validator_wallets.pop(validator)
+        self._validator_wallets = {
+            validator: wallet for validator, wallet in self._validator_wallets.items()
+            if validator in self._attestation_pool
+        }
 
     def process_end_cycle_request(self):
         if not self._proposed_block:
