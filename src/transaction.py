@@ -62,11 +62,15 @@ class Transaction:
     
 
 def transaction_from_dict(transaction_data: Mapping[str, Any]) -> Transaction:
+    if 'signature' in transaction_data:
+        sig = transaction_data['signature']
+    else:
+        sig = None
     return Transaction(
         sender_address=transaction_data['sender'],
         recipient_address=transaction_data['recipient'],
         amount=transaction_data['amount'],
-        signature=transaction_data['signature'],
+        signature=sig,
         timestamp=transaction_data['timestamp']
     )
 

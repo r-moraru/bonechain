@@ -168,20 +168,21 @@ class ExecutionLayer:
 
             self._network_out.put(
                 {
-                    'sender-id': self._validator.get_public_key()
+                    'sender-address': self._validator.get_public_key()
                 },
                 block=True,
                 msg_type=network_message_types['blockchain']
             )
 
-            blockchain = self._network_in.get(
+            blockchain_response = self._network_in.get(
                 block=True,
                 msg_type=network_message_types['blockchain']
             )
-            blockchain = [block_from_dict(block_data) for block_data in blockchain]
+            blockchain = [block_from_dict(block_data) for block_data in blockchain_response['blockchain']]
 
             # suppose bootstrap nodes in network send honest blockchains
-            self._blockchain = blockchain
+            self._blockchain = Blockchain()
+            self._blockchain._blocks = blockchain
 
             self._parent_out.put(
                 self._blockchain.get_blocks()[0]._timestamp,
@@ -211,12 +212,11 @@ class ExecutionLayer:
         # made after this request from the wallet are ignored.
         # After x rounds of inactivity, wallet is freed again.
         valid = (
-            check_transaction_signature(join_request) and
-            join_request.get_sender_address() in self._account_balances.keys() and
-            self._account_balances[join_request.get_sender_address()] >= minimum_validator_balance
+            check_transaction_signature(join_request)
         )
         if valid:
             self._joining_pool.append(join_request)
+        
 
     def process_blockchain_request(self, blockchain_request):
         self._network_out.put(
@@ -292,7 +292,7 @@ class ExecutionLayer:
             if j == len(join_requests):
                 join_request_time = sentinel
             else:
-                join_request_time = join_requests[i].get_timestamp()
+                join_request_time = join_requests[j].get_timestamp()
 
             if transaction_time < join_request_time:
                 if (self.check_transaction_funds(transactions[i]) and
@@ -301,9 +301,10 @@ class ExecutionLayer:
                     accepted_transactions.append(transactions[i])
                 i += 1
             else:
-                # OPT: check for minimum validator balance
-                self.update_state_from_join_request(join_requests[j])
-                accepted_join_requests.append(join_requests[j])
+                if (join_requests[j].get_sender_address() in self._account_balances.keys() and
+                    self._account_balances[join_requests[j].get_sender_address()] >= minimum_validator_balance):
+                    self.update_state_from_join_request(join_requests[j])
+                    accepted_join_requests.append(join_requests[j])
                 j += 1
 
         for transaction in accepted_transactions:
